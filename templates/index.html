@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>대한민국 실시간 인기 검색어</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e3248;
+      --accent: #6366f1; --accent2: #818cf8; --text: #e2e8f0; --muted: #94a3b8;
+      --gold: #f59e0b; --silver: #94a3b8; --bronze: #b45309;
+      --red: #ef4444; --green: #22c55e; --radius: 14px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI','Apple SD Gothic Neo',sans-serif; min-height: 100vh; padding-bottom: 60px; }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg,#1e1b4b 0%,#312e81 50%,#1e3a5f 100%);
+      padding: 22px 24px; position: sticky; top: 0; z-index: 100;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    }
+    .header-left h1 { font-size: 1.3rem; font-weight: 700; }
+    .header-left p  { font-size: 0.78rem; color: var(--muted); margin-top: 3px; }
+    #auth-section   { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    #user-info      { display: none; align-items: center; gap: 8px; }
+    #user-avatar    { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--accent); object-fit: cover; }
+    #user-name      { font-size: 0.82rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button { cursor: pointer; border: none; border-radius: 8px; font-size: 0.83rem; font-weight: 600; padding: 8px 16px; transition: opacity .15s, transform .1s; }
+    button:hover { opacity: .85; } button:active { transform: scale(.97); }
+    #login-btn       { background:#fff; color:#1a1d27; display:flex; align-items:center; gap:7px; }
+    #login-btn svg   { width:17px; height:17px; }
+    #logout-btn      { background: var(--surface2); color: var(--muted); border:1px solid var(--border); display:none; }
+    #refresh-bq-btn  { background: var(--accent); color:#fff; display:none; }
+
+    /* ── Tab bar ── */
+    .tab-bar { display:flex; gap:4px; padding: 20px 16px 0; max-width:960px; margin:0 auto; }
+    .tab-btn {
+      padding: 9px 20px; border-radius: 8px 8px 0 0; border: 1px solid var(--border);
+      border-bottom: none; background: var(--surface2); color: var(--muted);
+      font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all .15s;
+    }
+    .tab-btn.active { background: var(--surface); color: var(--text); border-color: var(--accent); }
+    .tab-content { display:none; } .tab-content.active { display:block; }
+
+    /* ── Main ── */
+    main { max-width: 960px; margin: 0 auto; padding: 0 16px 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); }
+
+    /* ── Screens (shared) ── */
+    .screen { display:none; } .screen.active { display:block; }
+    #login-screen { text-align:center; padding:80px 20px; }
+    #login-screen .icon { font-size:3.5rem; margin-bottom:18px; }
+    #login-screen h2 { font-size:1.5rem; font-weight:700; margin-bottom:10px; }
+    #login-screen p  { color:var(--muted); font-size:.9rem; margin-bottom:32px; line-height:1.6; }
+    #login-screen-btn { display:inline-flex; align-items:center; gap:9px; background:#fff; color:#111; padding:13px 26px; border-radius:10px; font-size:.95rem; }
+    #login-screen-btn svg { width:20px; height:20px; }
+    .spinner { width:40px;height:40px;border:4px solid var(--surface2);border-top-color:var(--accent);border-radius:50%;animation:spin .75s linear infinite;margin:0 auto 18px; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    .loading-screen, .error-screen { text-align:center; padding:60px 20px; }
+    .error-icon { font-size:2.5rem; margin-bottom:14px; }
+    .error-msg  { background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);border-radius:8px;padding:10px 14px;font-size:.83rem;margin-bottom:18px;text-align:left; }
+
+    /* ── BigQuery tab ── */
+    #bq-status { display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;font-size:.78rem;color:var(--muted); }
+    .badge { display:inline-flex;align-items:center;gap:5px;background:rgba(99,102,241,.2);border:1px solid rgba(99,102,241,.4);color:var(--accent2);font-size:.7rem;padding:3px 9px;border-radius:99px;font-weight:600;text-transform:uppercase; }
+    .badge::before{content:'●';font-size:.45rem}
+    .trends-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;padding:0 20px 24px; }
+    .trend-card { background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;display:flex;align-items:center;gap:14px;transition:border-color .2s,transform .15s,box-shadow .2s;animation:fadeUp .35s ease both; }
+    .trend-card:hover { border-color:var(--accent);transform:translateY(-2px);box-shadow:0 8px 24px rgba(99,102,241,.15); }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    .rank-badge { min-width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;flex-shrink:0; }
+    .rank-1{background:rgba(245,158,11,.15);color:var(--gold);border:1px solid rgba(245,158,11,.3)}
+    .rank-2{background:rgba(148,163,184,.12);color:var(--silver);border:1px solid rgba(148,163,184,.3)}
+    .rank-3{background:rgba(180,83,9,.15);color:var(--bronze);border:1px solid rgba(180,83,9,.3)}
+    .rank-other{background:var(--surface);color:var(--muted);border:1px solid var(--border)}
+    .trend-info { flex:1;min-width:0; }
+    .trend-term { font-size:.95rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px; }
+    .score-bar-wrap { display:flex;align-items:center;gap:7px; }
+    .score-bar-bg { flex:1;height:4px;background:var(--surface);border-radius:99px;overflow:hidden; }
+    .score-bar    { height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:99px;transition:width .6s cubic-bezier(.4,0,.2,1); }
+    .score-label  { font-size:.7rem;color:var(--muted);flex-shrink:0; }
+
+    /* ── CSV tab ── */
+    .csv-layout { display:grid;grid-template-columns:300px 1fr;gap:0;min-height:500px; }
+
+    /* Upload + list panel */
+    .csv-panel { border-right:1px solid var(--border);padding:20px;display:flex;flex-direction:column;gap:16px; }
+    .panel-title { font-size:.82rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px; }
+
+    .upload-area {
+      border:2px dashed var(--border);border-radius:var(--radius);padding:22px 16px;text-align:center;
+      cursor:pointer;transition:border-color .2s,background .2s;
+    }
+    .upload-area:hover,.upload-area.dragover { border-color:var(--accent);background:rgba(99,102,241,.05); }
+    .upload-area .upload-icon { font-size:2rem;margin-bottom:8px; }
+    .upload-area p { font-size:.82rem;color:var(--muted);margin-bottom:10px;line-height:1.5; }
+    #csv-file-input { display:none; }
+    .upload-btn { background:var(--accent);color:#fff;width:100%;padding:9px;border-radius:8px;font-size:.83rem; }
+    .upload-status { font-size:.78rem;margin-top:6px;min-height:18px; }
+    .upload-status.ok  { color:var(--green); }
+    .upload-status.err { color:var(--red); }
+
+    /* CSV list */
+    .csv-list { display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1; }
+    .csv-item {
+      background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+      padding:11px 14px;cursor:pointer;transition:border-color .15s;
+    }
+    .csv-item:hover,.csv-item.selected { border-color:var(--accent); }
+    .csv-item.selected { background:rgba(99,102,241,.08); }
+    .csv-kw  { font-size:.9rem;font-weight:600;margin-bottom:3px; }
+    .csv-meta{ font-size:.72rem;color:var(--muted); }
+    .csv-empty { text-align:center;color:var(--muted);font-size:.83rem;padding:20px 0; }
+
+    /* Chart panel */
+    .chart-panel { padding:24px; display:flex; flex-direction:column; gap:16px; overflow-y:auto; max-height:calc(100vh - 160px); }
+    .chart-placeholder { flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.88rem; }
+    .chart-header { display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px; }
+    .chart-title  { font-size:1.1rem;font-weight:700; }
+    .chart-sub    { font-size:.75rem;color:var(--muted); }
+    .chart-wrap   { position:relative;height:340px; }
+    .delete-btn   { background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25);font-size:.75rem;padding:5px 12px; }
+
+    @media(max-width:680px){
+      .csv-layout{grid-template-columns:1fr}
+      .csv-panel{border-right:none;border-bottom:1px solid var(--border)}
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>🇰🇷 실시간 인기 검색어</h1>
+    <p>Google BigQuery &middot; top_terms 데이터셋</p>
+  </div>
+  <div id="auth-section">
+    <div id="user-info">
+      <img id="user-avatar" src="" alt="avatar" />
+      <span id="user-name"></span>
+    </div>
+    <button id="refresh-bq-btn" onclick="loadTrends()">새로고침</button>
+    <button id="logout-btn" onclick="signOut()">로그아웃</button>
+    <button id="login-btn" onclick="signIn()">
+      <svg viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+      Google 로그인
+    </button>
+  </div>
+</header>
+
+<!-- 비로그인 -->
+<div id="login-screen" class="screen active" style="max-width:960px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);">
+  <div class="icon">📈</div>
+  <h2>대한민국 인기 검색어</h2>
+  <p>Google BigQuery 공개 데이터셋과<br>CSV 키워드 추이 분석을 한 곳에서.<br>로그인하면 모든 기능을 이용할 수 있습니다.</p>
+  <button id="login-screen-btn" onclick="signIn()" style="display:inline-flex;align-items:center;gap:9px;background:#fff;color:#111;padding:13px 26px;border-radius:10px;font-size:.95rem;">
+    <svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+    Google 계정으로 시작하기
+  </button>
+</div>
+
+<!-- 로그인 후 메인 -->
+<div id="main-screen" class="screen">
+  <div class="tab-bar" style="max-width:960px;margin:0 auto;">
+    <button class="tab-btn active" onclick="switchTab('csv')" id="tab-csv-btn">📂 키워드 추이 (CSV)</button>
+    <button class="tab-btn" onclick="switchTab('bq')"  id="tab-bq-btn">🔥 인기 검색어 (BigQuery)</button>
+  </div>
+
+  <main>
+    <!-- ── CSV 탭 ── -->
+    <div class="tab-content active" id="tab-csv">
+      <div class="csv-layout">
+
+        <!-- 왼쪽 패널: 업로드 + 목록 -->
+        <div class="csv-panel">
+          <div class="panel-title">CSV 업로드</div>
+
+          <div class="upload-area" id="upload-area"
+               onclick="document.getElementById('csv-file-input').click()"
+               ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+            <div class="upload-icon">☁️</div>
+            <p>trends.google.com에서 받은<br>CSV 파일을 올려주세요</p>
+            <button class="upload-btn" onclick="event.stopPropagation();document.getElementById('csv-file-input').click()">파일 선택</button>
+            <input type="file" id="csv-file-input" accept=".csv" onchange="handleFileSelect(event)" />
+          </div>
+          <div class="upload-status" id="upload-status"></div>
+
+          <div class="panel-title" style="margin-top:4px">등록된 CSV <span id="csv-count" style="color:var(--accent);font-size:.9em"></span></div>
+          <div class="csv-list" id="csv-list">
+            <div class="csv-empty">불러오는 중…</div>
+          </div>
+        </div>
+
+        <!-- 오른쪽 패널: 차트 -->
+        <div class="chart-panel" id="chart-panel">
+          <div class="chart-placeholder" id="chart-placeholder">
+            ← 왼쪽에서 CSV를 선택하면 차트가 표시됩니다
+          </div>
+          <div id="chart-area" style="display:none;flex:1;flex-direction:column;gap:14px">
+            <div class="chart-header">
+              <div>
+                <div class="chart-title" id="chart-title"></div>
+                <div class="chart-sub"  id="chart-sub"></div>
+              </div>
+              <button class="delete-btn" onclick="deleteCSV()">삭제</button>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="trend-chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── BigQuery 탭 ── -->
+    <div class="tab-content" id="tab-bq">
+      <div id="bq-status" style="display:none">
+        <span class="badge">LIVE</span>
+        <span id="last-updated"></span>
+      </div>
+      <div id="bq-loading" class="loading-screen" style="display:none">
+        <div class="spinner"></div>
+        <p style="color:var(--muted)">BigQuery에서 데이터를 가져오는 중…</p>
+      </div>
+      <div id="bq-error" class="error-screen" style="display:none">
+        <div class="error-icon">⚠️</div>
+        <div class="error-msg" id="bq-error-msg"></div>
+        <button onclick="loadTrends()" style="background:var(--accent);color:#fff">다시 시도</button>
+      </div>
+      <div class="trends-grid" id="trends-grid"></div>
+    </div>
+  </main>
+</div>
+
+<footer style="text-align:center;padding:36px 16px 0;font-size:.76rem;color:#3d4266">
+  Powered by Google BigQuery &middot; Supabase &middot; Flask
+</footer>
+
+<script>
+const SUPABASE_URL      = "{{ supabase_url }}";
+const SUPABASE_ANON_KEY = "{{ supabase_anon_key }}";
+const { createClient }  = supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let _session     = null;
+let _chartInst   = null;
+let _selectedId  = null;
+
+// ── Auth ──────────────────────────────────────────────────────
+async function signIn() {
+  await sb.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: window.location.href } });
+}
+async function signOut() { await sb.auth.signOut(); setLoggedOut(); }
+
+function setLoggedIn(session) {
+  _session = session;
+  const meta = session.user.user_metadata || {};
+  document.getElementById('user-name').textContent = meta.full_name || meta.name || session.user.email || '';
+  const av = document.getElementById('user-avatar');
+  av.src = meta.avatar_url || meta.picture || '';
+  av.style.display = av.src ? 'block' : 'none';
+  document.getElementById('user-info').style.display    = 'flex';
+  document.getElementById('refresh-bq-btn').style.display = 'inline-block';
+  document.getElementById('logout-btn').style.display   = 'inline-block';
+  document.getElementById('login-btn').style.display    = 'none';
+  document.getElementById('login-screen').classList.remove('active');
+  document.getElementById('main-screen').classList.add('active');
+  loadCSVList();
+  loadTrends();
+}
+function setLoggedOut() {
+  _session = null;
+  document.getElementById('user-info').style.display    = 'none';
+  document.getElementById('refresh-bq-btn').style.display = 'none';
+  document.getElementById('logout-btn').style.display   = 'none';
+  document.getElementById('login-btn').style.display    = 'inline-flex';
+  document.getElementById('login-screen').classList.add('active');
+  document.getElementById('main-screen').classList.remove('active');
+}
+
+// ── Tab ───────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('tab-' + tab + '-btn').classList.add('active');
+  if (tab === 'bq') document.getElementById('refresh-bq-btn').style.display = 'inline-block';
+  else              document.getElementById('refresh-bq-btn').style.display = 'none';
+}
+
+// ── Fetch helper ──────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Authorization': `Bearer ${_session.access_token}`, ...(opts.headers || {}) }
+  });
+  return res.json();
+}
+
+// ── BigQuery trends ───────────────────────────────────────────
+async function loadTrends() {
+  const grid = document.getElementById('trends-grid');
+  const loading = document.getElementById('bq-loading');
+  const errEl   = document.getElementById('bq-error');
+  grid.innerHTML = ''; loading.style.display = 'block'; errEl.style.display = 'none';
+
+  const json = await api('/api/trends').catch(e => ({ success:false, error: e.message }));
+  loading.style.display = 'none';
+  if (!json.success) {
+    document.getElementById('bq-error-msg').textContent = json.error || '알 수 없는 오류';
+    errEl.style.display = 'block'; return;
+  }
+
+  const maxScore = json.data[0]?.score || 1;
+  document.getElementById('bq-status').style.display = 'flex';
+  document.getElementById('last-updated').textContent =
+    `기준일: ${json.data[0]?.refresh_date || '-'} · 캐시: ${json.mem_cache_age_seconds}초 전 갱신`;
+
+  grid.innerHTML = json.data.map((item, i) => {
+    const pct = Math.max(4, Math.round(item.score / maxScore * 100));
+    const rc  = i===0?'rank-1':i===1?'rank-2':i===2?'rank-3':'rank-other';
+    return `<div class="trend-card" style="animation-delay:${i*25}ms">
+      <div class="rank-badge ${rc}">${item.rank}</div>
+      <div class="trend-info">
+        <div class="trend-term" title="${esc(item.term)}">${esc(item.term)}</div>
+        <div class="score-bar-wrap">
+          <div class="score-bar-bg"><div class="score-bar" style="width:${pct}%"></div></div>
+          <span class="score-label">${item.score.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── CSV Upload ────────────────────────────────────────────────
+function onDragOver(e)  { e.preventDefault(); document.getElementById('upload-area').classList.add('dragover'); }
+function onDragLeave()  { document.getElementById('upload-area').classList.remove('dragover'); }
+function onDrop(e)      { e.preventDefault(); onDragLeave(); uploadFile(e.dataTransfer.files[0]); }
+function handleFileSelect(e) { if (e.target.files[0]) uploadFile(e.target.files[0]); }
+
+async function uploadFile(file) {
+  const status = document.getElementById('upload-status');
+  status.className = 'upload-status'; status.textContent = '업로드 중…';
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const json = await api('/api/csv/upload', { method:'POST', body: fd })
+    .catch(e => ({ success:false, error: e.message }));
+
+  if (json.success) {
+    status.className = 'upload-status ok';
+    status.textContent = `✓ "${json.keyword}" 업로드 완료 (${json.row_count}행)`;
+    document.getElementById('csv-file-input').value = '';
+    loadCSVList();
+  } else {
+    status.className = 'upload-status err';
+    status.textContent = '✗ ' + (json.error || '업로드 실패');
+  }
+}
+
+// ── CSV List ──────────────────────────────────────────────────
+async function loadCSVList() {
+  const listEl = document.getElementById('csv-list');
+  const json = await api('/api/csv/list').catch(() => ({ success:false, data:[] }));
+  const items = json.data || [];
+
+  document.getElementById('csv-count').textContent = `(${items.length})`;
+
+  if (!items.length) {
+    listEl.innerHTML = '<div class="csv-empty">등록된 CSV가 없습니다.</div>';
+    return;
+  }
+  listEl.innerHTML = items.map(item => `
+    <div class="csv-item" id="csv-item-${item.id}" onclick="loadCSVChart(${item.id})">
+      <div class="csv-kw">${esc(item.keyword)}</div>
+      <div class="csv-meta">${item.row_count}개 데이터 · ${item.user_email?.split('@')[0] || '?'} · ${fmtDate(item.created_at)}</div>
+    </div>`).join('');
+}
+
+// ── CSV Chart ─────────────────────────────────────────────────
+async function loadCSVChart(id) {
+  _selectedId = id;
+  document.querySelectorAll('.csv-item').forEach(el => el.classList.remove('selected'));
+  const itemEl = document.getElementById('csv-item-' + id);
+  if (itemEl) itemEl.classList.add('selected');
+
+  document.getElementById('chart-placeholder').style.display = 'none';
+  document.getElementById('chart-area').style.display = 'flex';
+  document.getElementById('chart-title').textContent = '불러오는 중…';
+  document.getElementById('chart-sub').textContent   = '';
+
+  const json = await api(`/api/csv/${id}`).catch(() => ({ success:false }));
+  if (!json.success) { document.getElementById('chart-title').textContent = '데이터 로드 실패'; return; }
+
+  const labels = json.data.map(r => r.date);
+  const values = json.data.map(r => r.value);
+  const meta   = json.meta;
+
+  document.getElementById('chart-title').textContent = meta.keyword;
+  document.getElementById('chart-sub').textContent =
+    `${labels[0]} ~ ${labels[labels.length-1]}  ·  ${meta.row_count}개 데이터  ·  업로드: ${meta.user_email?.split('@')[0]}`;
+
+  if (_chartInst) { _chartInst.destroy(); _chartInst = null; }
+
+  const ctx = document.getElementById('trend-chart').getContext('2d');
+  const chartType = meta.chart_type || 'line';
+  const wrap = document.querySelector('.chart-wrap');
+
+  if (chartType === 'bar') {
+    // 항목당 36px, 최소 300px
+    wrap.style.height = Math.max(200, json.data.length * 18) + 'px';
+  } else {
+    wrap.style.height = '340px';
+  }
+
+  if (chartType === 'bar') {
+    // ── 실시간 트렌드: 가로 막대 차트 ──
+    const barLabels = json.data.map(r => r.label || r.date);
+    const barValues = json.data.map(r => r.value);
+    const maxVal    = Math.max(...barValues) || 1;
+    _chartInst = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: barLabels,
+        datasets: [{
+          label: '검색량',
+          data: barValues,
+          backgroundColor: barValues.map((v, i) =>
+            i === 0 ? 'rgba(245,158,11,0.7)' :
+            i === 1 ? 'rgba(148,163,184,0.6)' :
+            i === 2 ? 'rgba(180,83,9,0.6)'    :
+            'rgba(99,102,241,0.55)'
+          ),
+          borderColor: 'transparent',
+          borderRadius: 6,
+        }]
+      },
+      plugins: [ChartDataLabels],
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { right: 10 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1a1d27', borderColor: '#2e3248', borderWidth: 1,
+            titleColor: '#e2e8f0', bodyColor: '#94a3b8',
+            callbacks: { label: c => ` 검색량: ${c.parsed.x.toLocaleString()}` }
+          },
+          datalabels: { display: false }
+        },
+        scales: {
+          x: { ticks: { color:'#94a3b8' }, grid: { color:'rgba(255,255,255,0.04)' } },
+          y: { ticks: { color:'#e2e8f0', font:{ size:12 }, autoSkip: false }, grid: { display:false } }
+        }
+      }
+    });
+  } else {
+    // ── 시간별 관심도: 라인 차트 ──
+    _chartInst = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: meta.keyword,
+          data: values,
+          borderColor: '#6366f1',
+          backgroundColor: 'rgba(99,102,241,0.12)',
+          borderWidth: 2.5,
+          pointRadius: labels.length > 100 ? 0 : 3,
+          pointHoverRadius: 5,
+          fill: true,
+          tension: 0.3,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode:'index', intersect:false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1a1d27', borderColor: '#2e3248', borderWidth: 1,
+            titleColor: '#e2e8f0', bodyColor: '#94a3b8',
+            callbacks: { label: c => ` 관심도: ${c.parsed.y}` }
+          }
+        },
+        scales: {
+          x: { ticks: { color:'#94a3b8', maxTicksLimit:10, maxRotation:0 }, grid: { color:'rgba(255,255,255,0.04)' } },
+          y: { min:0, max:100, ticks: { color:'#94a3b8' }, grid: { color:'rgba(255,255,255,0.04)' } }
+        }
+      }
+    });
+  }
+}
+
+async function deleteCSV() {
+  if (!_selectedId || !confirm('이 CSV를 삭제할까요?')) return;
+  const json = await api(`/api/csv/${_selectedId}`, { method:'DELETE' })
+    .catch(() => ({ success:false }));
+  if (json.success) {
+    _selectedId = null;
+    if (_chartInst) { _chartInst.destroy(); _chartInst = null; }
+    document.getElementById('chart-area').style.display = 'none';
+    document.getElementById('chart-placeholder').style.display = 'flex';
+    loadCSVList();
+  }
+}
+
+// ── Utils ─────────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// ── Init ──────────────────────────────────────────────────────
+(async () => {
+  const { data:{ session } } = await sb.auth.getSession();
+  if (session) setLoggedIn(session); else setLoggedOut();
+  sb.auth.onAuthStateChange((_e, session) => { if (session) setLoggedIn(session); else setLoggedOut(); });
+})();
+</script>
+</body>
+</html>
